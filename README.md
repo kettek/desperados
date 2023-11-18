@@ -16,7 +16,7 @@ go run ./cmd/desp
 
 ## Commands
 
-  * `/start <ip:port>`
+  * `/start [ip:port]`
     * Start listening on multicast.
   * `/stop`
     * Stop listening on multicast.
