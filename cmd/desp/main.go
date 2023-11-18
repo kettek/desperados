@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -78,7 +79,14 @@ func initialModel() model {
 
 	vp := viewport.New(80, 4)
 	var messages []string
-	messages = append(messages, systemStyle.Render("Welcome, desperado."))
+	var welcome string
+	if rand.Intn(2) == 0 {
+		welcome = "Bienvenida, desperada."
+	} else {
+		welcome = "Bienvenido, desperado."
+	}
+
+	messages = append(messages, systemStyle.Render(welcome))
 
 	// Might as well autostart multicast
 	multicaster, err = startMulticast(defaultAddr)
