@@ -93,6 +93,15 @@ func NewMulticaster(address string) (*Multicaster, error) {
 			if n < 4 || string(data[:4]) != "DESP" {
 				continue
 			}
+			if n == 9 {
+				if string(data[4:9]) == "!ping" {
+					// Send a pong.
+					conn.WriteToUDP(append([]byte("DESP"), []byte("!pong")...), raddr)
+					continue
+				} else if string(data[4:9]) == "!pong" {
+					continue
+				}
+			}
 			m.recv <- &MulticastMessage{raddr, data[4:n]}
 			conn.SetReadDeadline(time.Now().Add(time.Second * 1))
 		}

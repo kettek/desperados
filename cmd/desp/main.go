@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"net"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -14,6 +15,7 @@ import (
 
 var program *tea.Program
 var multicaster *dnet.Multicaster
+var ranger *dnet.RangerV4
 
 const defaultAddr = "239.0.0.0:11332"
 
@@ -49,6 +51,26 @@ func startMulticast(addr string) (*dnet.Multicaster, error) {
 	return m, nil
 }
 
+func startRange(ip net.IP) (*dnet.RangerV4, error) {
+	r := dnet.NewRanger(ip)
+	results := make(chan dnet.RangerResult, 2)
+	r.SetResults(results)
+	r.Start(11332)
+
+	go func() {
+		for {
+			select {
+			case result := <-results:
+				program.Send(result)
+				if result.Type() == "done" {
+					return
+				}
+			}
+		}
+	}()
+	return r, nil
+}
+
 type model struct {
 	viewport    viewport.Model
 	messages    []string
@@ -64,7 +86,7 @@ func initialModel() model {
 	ta := textarea.New()
 	ta.Focus()
 
-	ta.Prompt = "> "
+	ta.Prompt = "DESP> "
 	ta.CharLimit = 280
 
 	ta.SetWidth(80)
@@ -136,6 +158,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.viewport.GotoBottom()
+	case dnet.RangerResult:
+		switch result := msg.(type) {
+		case dnet.RangerPong:
+			m.messages = append(m.messages, m.systemStyle.Render(fmt.Sprintf("%s is a desperados", result.Addr.String())))
+			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			m.viewport.GotoBottom()
+		case dnet.RangerStep:
+			// Refresh UI
+			if result.IsTCP {
+				m.textarea.Prompt = fmt.Sprintf("%03dt> ", ranger.Current())
+			} else {
+				m.textarea.Prompt = fmt.Sprintf("%03du> ", ranger.Current())
+			}
+			m.textarea.SetWidth(80)
+		case dnet.RangerDone:
+			fmt.Println("got ranger done")
+			m.messages = append(m.messages, m.systemStyle.Render("Ranging complete"))
+			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			m.viewport.GotoBottom()
+			m.textarea.Prompt = "DESP> "
+			m.textarea.SetWidth(80)
+		}
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -166,7 +210,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if v == "/stop" {
 					// stop multicast
 					multicaster.Close()
+					multicaster = nil
 					m.messages = append(m.messages, m.systemStyle.Render("Multicast stopped"))
+				} else if v == "/range" {
+					// Get local ip.
+					addrs, err := net.InterfaceAddrs()
+					if err != nil {
+						m.messages = append(m.messages, m.systemStyle.Render(err.Error()))
+						break
+					}
+					var ip net.IP
+					for _, addr := range addrs {
+						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+							if ipnet.IP.To4() != nil {
+								ip = ipnet.IP
+								break
+							}
+						}
+					}
+					ranger, _ = startRange(ip)
+					m.messages = append(m.messages, m.systemStyle.Render("Ranger started"))
+				} else if v == "/rangestop" {
+					if ranger != nil {
+						ranger.Close()
+						ranger = nil
+						m.messages = append(m.messages, m.systemStyle.Render("Ranger stopped"))
+					}
 				} else {
 					m.messages = append(m.messages, m.systemStyle.Render("Unknown command"))
 				}
