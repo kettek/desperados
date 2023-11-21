@@ -19,16 +19,83 @@ var ranger *dnet.RangerV4
 
 const defaultAddr = "239.0.0.0:11332"
 
+var commands map[string]func(m model, in string) []string
+
+func init() {
+	commands = map[string]func(m model, in string) []string{
+		"help": func(m model, in string) (messages []string) {
+			for k := range commands {
+				messages = append(messages, m.systemStyle.Render(fmt.Sprintf("/%s", k)))
+			}
+			return
+		},
+		"mcast": func(m model, in string) (messages []string) {
+			var err error
+			parts := strings.Split(in, " ")
+			if parts[0] == "start" || parts[0] == "" {
+				address := ""
+				if len(parts) < 2 {
+					messages = append(messages, m.systemStyle.Render("No address provided, using default."))
+				} else {
+					address = parts[1]
+				}
+				// start multicast
+				multicaster, err = startMulticast(defaultAddr, address)
+				if err != nil {
+					messages = append(messages, err.Error())
+				} else {
+					messages = append(messages, m.systemStyle.Render(fmt.Sprintf("Multicast started on %s/%s", multicaster.RecvAddr().String(), multicaster.SendAddr().String())))
+				}
+			} else if parts[0] == "stop" {
+				// stop multicast
+				multicaster.Close()
+				multicaster = nil
+				messages = append(messages, m.systemStyle.Render("Multicast stopped"))
+			}
+			return messages
+		},
+		"range": func(m model, in string) (messages []string) {
+			parts := strings.Split(in, " ")
+			if parts[0] == "" || parts[0] == "start" {
+				// Get local ip.
+				addrs, err := net.InterfaceAddrs()
+				if err != nil {
+					messages = append(messages, m.systemStyle.Render(err.Error()))
+					return
+				}
+				var ip net.IP
+				for _, addr := range addrs {
+					if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
+						if ipnet.IP.To4() != nil {
+							ip = ipnet.IP
+							break
+						}
+					}
+				}
+				ranger, _ = startRange(ip)
+				messages = append(messages, m.systemStyle.Render("Ranger started"))
+			} else if parts[0] == "stop" {
+				if ranger != nil {
+					ranger.Close()
+					ranger = nil
+					messages = append(messages, m.systemStyle.Render("Ranger stopped"))
+				}
+			}
+
+			return
+		},
+	}
+}
+
 func main() {
 	program = tea.NewProgram(initialModel())
 	if _, err := program.Run(); err != nil {
 		panic(err)
 	}
-
 }
 
-func startMulticast(addr string) (*dnet.Multicaster, error) {
-	m, err := dnet.NewMulticaster(addr)
+func startMulticast(addr string, sendAddr string) (*dnet.Multicaster, error) {
+	m, err := dnet.NewMulticaster(addr, sendAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -111,11 +178,11 @@ func initialModel() model {
 	messages = append(messages, systemStyle.Render(welcome))
 
 	// Might as well autostart multicast
-	multicaster, err = startMulticast(defaultAddr)
+	multicaster, err = startMulticast(defaultAddr, "")
 	if err != nil {
 		messages = append(messages, err.Error())
 	} else {
-		messages = append(messages, systemStyle.Render("Multicast started"))
+		messages = append(messages, systemStyle.Render(fmt.Sprintf("Multicast started on %s/%s", multicaster.RecvAddr().String(), multicaster.SendAddr().String())))
 	}
 
 	messages = append(messages, systemStyle.Render("Type a message and press Enter to send."))
@@ -141,7 +208,6 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
-		err   error
 		tiCmd tea.Cmd
 		vpCmd tea.Cmd
 	)
@@ -167,13 +233,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case dnet.RangerStep:
 			// Refresh UI
 			if result.IsTCP {
-				m.textarea.Prompt = fmt.Sprintf("%03dt> ", ranger.Current())
+				m.textarea.Prompt = fmt.Sprintf("%03dt> ", result.Index)
 			} else {
-				m.textarea.Prompt = fmt.Sprintf("%03du> ", ranger.Current())
+				m.textarea.Prompt = fmt.Sprintf("%03du> ", result.Index)
 			}
 			m.textarea.SetWidth(80)
 		case dnet.RangerDone:
-			fmt.Println("got ranger done")
 			m.messages = append(m.messages, m.systemStyle.Render("Ranging complete"))
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			m.viewport.GotoBottom()
@@ -191,50 +256,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if len(v) > 0 && v[0] == '/' {
-				// handle as command
-				if strings.HasPrefix(v, "/start") {
-					parts := strings.Split(v, " ")
-					address := defaultAddr
-					if len(parts) < 2 {
-						m.messages = append(m.messages, m.systemStyle.Render(fmt.Sprintf("No address provided, using %s.", defaultAddr)))
-					} else {
-						address = parts[1]
-					}
-					// start multicast
-					multicaster, err = startMulticast(address)
-					if err != nil {
-						m.messages = append(m.messages, err.Error())
-					} else {
-						m.messages = append(m.messages, m.systemStyle.Render("Multicast started"))
-					}
-				} else if v == "/stop" {
-					// stop multicast
-					multicaster.Close()
-					multicaster = nil
-					m.messages = append(m.messages, m.systemStyle.Render("Multicast stopped"))
-				} else if v == "/range" {
-					// Get local ip.
-					addrs, err := net.InterfaceAddrs()
-					if err != nil {
-						m.messages = append(m.messages, m.systemStyle.Render(err.Error()))
-						break
-					}
-					var ip net.IP
-					for _, addr := range addrs {
-						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-							if ipnet.IP.To4() != nil {
-								ip = ipnet.IP
-								break
-							}
-						}
-					}
-					ranger, _ = startRange(ip)
-					m.messages = append(m.messages, m.systemStyle.Render("Ranger started"))
-				} else if v == "/rangestop" {
-					if ranger != nil {
-						ranger.Close()
-						ranger = nil
-						m.messages = append(m.messages, m.systemStyle.Render("Ranger stopped"))
+				parts := strings.Split(v[1:], " ")
+				if cmd, ok := commands[parts[0]]; ok {
+					if msgs := cmd(m, strings.Join(parts[1:], " ")); msgs != nil {
+						m.messages = append(m.messages, msgs...)
 					}
 				} else {
 					m.messages = append(m.messages, m.systemStyle.Render("Unknown command"))
@@ -243,7 +268,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if multicaster == nil || multicaster.Closed() {
 					m.messages = append(m.messages, m.systemStyle.Render("Please start multicast first with /start"))
 				} else {
-					multicaster.Send([]byte(m.textarea.Value()))
+					multicaster.Send([]byte(v))
 				}
 			}
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))

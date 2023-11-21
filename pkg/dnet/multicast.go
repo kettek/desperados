@@ -5,6 +5,7 @@ package dnet
 
 import (
 	"net"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,10 @@ type Multicaster struct {
 
 func (m *Multicaster) SendAddr() *net.UDPAddr {
 	return m.sendConn.LocalAddr().(*net.UDPAddr)
+}
+
+func (m *Multicaster) RecvAddr() *net.UDPAddr {
+	return m.conn.LocalAddr().(*net.UDPAddr)
 }
 
 func (m *Multicaster) Closed() bool {
@@ -44,8 +49,28 @@ func (m *Multicaster) Close() {
 	m.close <- struct{}{}
 }
 
-func NewMulticaster(address string) (*Multicaster, error) {
+func NewMulticaster(address, sendAddress string) (*Multicaster, error) {
 	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
+
+	// Acquire the primary interface address if none is specified.
+	if sendAddress == "" {
+		c, err := net.Dial("udp", "8.8.8.8:80")
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		sendAddress = c.LocalAddr().String()
+	}
+
+	// Allow lazy address specification.
+	if !strings.Contains(sendAddress, ":") {
+		sendAddress += ":0"
+	}
+
+	sendAddr, err := net.ResolveUDPAddr("udp", sendAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +81,7 @@ func NewMulticaster(address string) (*Multicaster, error) {
 	}
 
 	// Set up the send connection.
-	sendConn, err := net.DialUDP("udp", nil, addr)
+	sendConn, err := net.DialUDP("udp", sendAddr, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +101,10 @@ func NewMulticaster(address string) (*Multicaster, error) {
 			// Check if we should close.
 			select {
 			case <-m.close:
+				m.conn.Close()
+				m.sendConn.Close()
 				m.conn = nil
+				m.sendConn = nil
 				return
 			default:
 			}
