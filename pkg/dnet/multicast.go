@@ -74,6 +74,8 @@ func NewMulticaster(address, sendAddress string) (*Multicaster, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Ensure that the port is 0.
+	sendAddr.Port = 0
 
 	conn, err := net.ListenMulticastUDP("udp", nil, addr)
 	if err != nil {
