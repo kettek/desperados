@@ -4,7 +4,6 @@ This file contains the implementation of the multicast protocol functions.
 package dnet
 
 import (
-	"fmt"
 	"net"
 	"strings"
 	"time"
@@ -120,7 +119,6 @@ func NewMulticaster(address, sendAddress string) (*Multicaster, error) {
 	}
 
 	if loop, err := pc.MulticastLoopback(); err == nil {
-		fmt.Println("loopback", loop)
 		if !loop {
 			if err := pc.SetMulticastLoopback(true); err != nil {
 				return nil, err
