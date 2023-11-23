@@ -4,9 +4,12 @@ This file contains the implementation of the multicast protocol functions.
 package dnet
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 type MulticastMessage struct {
@@ -77,9 +80,52 @@ func NewMulticaster(address, sendAddress string) (*Multicaster, error) {
 	// Ensure that the port is 0.
 	sendAddr.Port = 0
 
-	conn, err := net.ListenMulticastUDP("udp", nil, addr)
+	var miface net.Interface
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagMulticast == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if iface.HardwareAddr == nil {
+			continue
+		}
+		if addrs, err := iface.Addrs(); err == nil {
+			for _, a := range addrs {
+				// FIXME: Should probably do a type assertion first.
+				if a.(*net.IPNet).IP.Equal(sendAddr.IP) {
+					miface = iface
+					break
+				}
+			}
+		}
+	}
+
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	pc := ipv4.NewPacketConn(conn)
+	if err := pc.JoinGroup(&miface, addr); err != nil {
+		return nil, err
+	}
+
+	if loop, err := pc.MulticastLoopback(); err == nil {
+		fmt.Println("loopback", loop)
+		if !loop {
+			if err := pc.SetMulticastLoopback(true); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Set up the send connection.
