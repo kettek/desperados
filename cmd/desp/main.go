@@ -56,7 +56,7 @@ func init() {
 		},
 		"range": func(m model, in string) (messages []string) {
 			parts := strings.Split(in, " ")
-			if parts[0] == "" || parts[0] == "start" {
+			if parts[0] == "" || parts[0] == "udp" || parts[0] == "tcp" {
 				// Get local ip.
 				addrs, err := net.InterfaceAddrs()
 				if err != nil {
@@ -72,7 +72,11 @@ func init() {
 						}
 					}
 				}
-				ranger, _ = startRange(ip)
+				if parts[0] == "tcp" {
+					ranger, _ = startRange(ip, true)
+				} else {
+					ranger, _ = startRange(ip, false)
+				}
 				messages = append(messages, m.systemStyle.Render("Ranger started"))
 			} else if parts[0] == "stop" {
 				if ranger != nil {
@@ -118,11 +122,11 @@ func startMulticast(addr string, sendAddr string) (*dnet.Multicaster, error) {
 	return m, nil
 }
 
-func startRange(ip net.IP) (*dnet.RangerV4, error) {
+func startRange(ip net.IP, tcp bool) (*dnet.RangerV4, error) {
 	r := dnet.NewRanger(ip)
 	results := make(chan dnet.RangerResult, 2)
 	r.SetResults(results)
-	r.Start(11332)
+	r.Start(11332, tcp)
 
 	go func() {
 		for {

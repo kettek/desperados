@@ -72,7 +72,7 @@ func (r *RangerV4) Close() {
 	}()
 }
 
-func (r *RangerV4) Start(port int) {
+func (r *RangerV4) Start(port int, tcp bool) {
 	addr := r.IP.String()
 	parts := strings.Split(addr, ".")
 
@@ -88,37 +88,38 @@ func (r *RangerV4) Start(port int) {
 			addr = strings.Join(parts[:3], ".") + "." + fmt.Sprintf("%d", r.cIndex) + ":" + fmt.Sprint(port)
 
 			// Dial addr with UDP.
-			if udpAddr, err := net.ResolveUDPAddr("udp", addr); err == nil {
-				if udpConn, err := net.DialUDP("udp", nil, udpAddr); err == nil {
-					defer udpConn.Close()
-					udpConn.SetWriteDeadline(time.Now().Add(r.WaitDuration))
-					if _, err := udpConn.Write(append([]byte("DESP"), []byte("!ping")...)); err == nil {
-						udpConn.SetReadDeadline(time.Now().Add(r.WaitDuration))
-						bytes := make([]byte, 9)
-						if n, err := udpConn.Read(bytes); err == nil && n == 9 && string(bytes) == "DESP!pong" {
-							// Successfully read!
-							r.resultChan <- RangerPong{
-								Addr: udpConn.RemoteAddr(),
+			if !tcp {
+				if udpAddr, err := net.ResolveUDPAddr("udp", addr); err == nil {
+					if udpConn, err := net.DialUDP("udp", nil, udpAddr); err == nil {
+						defer udpConn.Close()
+						udpConn.SetWriteDeadline(time.Now().Add(r.WaitDuration))
+						if _, err := udpConn.Write(append([]byte("DESP"), []byte("!ping")...)); err == nil {
+							udpConn.SetReadDeadline(time.Now().Add(r.WaitDuration))
+							bytes := make([]byte, 9)
+							if n, err := udpConn.Read(bytes); err == nil && n == 9 && string(bytes) == "DESP!pong" {
+								// Successfully read!
+								r.resultChan <- RangerPong{
+									Addr: udpConn.RemoteAddr(),
+								}
 							}
+						} else {
+							if e, ok := err.(net.Error); !ok || e.Timeout() {
+								// Not a timeout.
+							}
+							// Is a timeout.
 						}
 					} else {
-						if e, ok := err.(net.Error); !ok || e.Timeout() {
-							// Not a timeout.
-						}
-						// Is a timeout.
+						// no dial?
+						fmt.Println(err)
 					}
 				} else {
-					// no dial?
+					// no resolve?
 					fmt.Println(err)
 				}
 			} else {
-				// no resolve?
-				fmt.Println(err)
-			}
-
-			// Dial addr with TCP.
-			/*if tcpAddr, err := net.ResolveTCPAddr("tcp", addr); err == nil {
-				if tcpConn, err := net.DialTCP("tcp", nil, tcpAddr); err == nil {
+				// Dial addr with TCP.
+				d := net.Dialer{Timeout: r.WaitDuration}
+				if tcpConn, err := d.Dial("tcp", addr); err == nil {
 					tcpConn.SetWriteDeadline(time.Now().Add(r.WaitDuration))
 					if _, err := tcpConn.Write(append([]byte("DESP"), []byte("!ping")...)); err == nil {
 						tcpConn.SetReadDeadline(time.Now().Add(r.WaitDuration))
@@ -139,16 +140,14 @@ func (r *RangerV4) Start(port int) {
 				} else {
 					// no dial?
 				}
-			} else {
-				// no resolve?
-			}*/
+			}
 
 			if r.cIndex == 255 {
 				r.resultChan <- RangerDone{}
 				return
 			}
 			r.resultChan <- RangerStep{
-				IsTCP: false,
+				IsTCP: tcp,
 				Index: r.cIndex,
 			}
 			r.cIndex++
