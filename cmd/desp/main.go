@@ -19,74 +19,88 @@ var ranger *dnet.RangerV4
 
 const defaultAddr = "239.0.0.0:11332"
 
-var commands map[string]func(m model, in string) []string
+type commandDefinition struct {
+	Func func(m model, in string) []string
+	Help string
+}
+
+var commands map[string]commandDefinition
 
 func init() {
-	commands = map[string]func(m model, in string) []string{
-		"help": func(m model, in string) (messages []string) {
-			for k := range commands {
-				messages = append(messages, m.systemStyle.Render(fmt.Sprintf("/%s", k)))
-			}
-			return
+	commands = map[string]commandDefinition{
+		"help": {
+			Func: func(m model, in string) (messages []string) {
+				for k := range commands {
+					messages = append(messages, m.systemStyle.Render(fmt.Sprintf("/%s\n\t%s", k, commands[k].Help)))
+				}
+				return
+			},
+			Help: "Prints this help message",
 		},
-		"mcast": func(m model, in string) (messages []string) {
-			var err error
-			parts := strings.Split(in, " ")
-			if parts[0] == "start" || parts[0] == "" {
-				address := ""
-				if len(parts) < 2 {
-					messages = append(messages, m.systemStyle.Render("No address provided, using default."))
-				} else {
-					address = parts[1]
+		"mcast": {
+			Func: func(m model, in string) (messages []string) {
+				var err error
+				parts := strings.Split(in, " ")
+				if parts[0] == "start" || parts[0] == "" {
+					address := ""
+					if len(parts) < 2 {
+						messages = append(messages, m.systemStyle.Render("No address provided, using default."))
+					} else {
+						address = parts[1]
+					}
+					// start multicast
+					multicaster, err = startMulticast(defaultAddr, address)
+					if err != nil {
+						messages = append(messages, err.Error())
+					} else {
+						messages = append(messages, m.systemStyle.Render(fmt.Sprintf("Multicast started on %s/%s", multicaster.RecvAddr().String(), multicaster.SendAddr().String())))
+					}
+				} else if parts[0] == "stop" {
+					// stop multicast
+					multicaster.Close()
+					multicaster = nil
+					messages = append(messages, m.systemStyle.Render("Multicast stopped"))
 				}
-				// start multicast
-				multicaster, err = startMulticast(defaultAddr, address)
-				if err != nil {
-					messages = append(messages, err.Error())
-				} else {
-					messages = append(messages, m.systemStyle.Render(fmt.Sprintf("Multicast started on %s/%s", multicaster.RecvAddr().String(), multicaster.SendAddr().String())))
-				}
-			} else if parts[0] == "stop" {
-				// stop multicast
-				multicaster.Close()
-				multicaster = nil
-				messages = append(messages, m.systemStyle.Render("Multicast stopped"))
-			}
-			return messages
+				return messages
+			},
+			Help: "Starts or stops multicast. Usage: /mcast [start|stop] [address]",
 		},
-		"range": func(m model, in string) (messages []string) {
-			parts := strings.Split(in, " ")
-			if parts[0] == "" || parts[0] == "udp" || parts[0] == "tcp" {
-				// Get local ip.
-				addrs, err := net.InterfaceAddrs()
-				if err != nil {
-					messages = append(messages, m.systemStyle.Render(err.Error()))
-					return
-				}
-				var ip net.IP
-				for _, addr := range addrs {
-					if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
-						if ipnet.IP.To4() != nil {
-							ip = ipnet.IP
-							break
+		"range": {
+			Func: func(m model, in string) (messages []string) {
+				parts := strings.Split(in, " ")
+				if parts[0] == "" || parts[0] == "udp" || parts[0] == "tcp" {
+					// Get local ip.
+					addrs, err := net.InterfaceAddrs()
+					if err != nil {
+						messages = append(messages, m.systemStyle.Render(err.Error()))
+						return
+					}
+					var ip net.IP
+					for _, addr := range addrs {
+						if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
+							if ipnet.IP.To4() != nil {
+								ip = ipnet.IP
+								break
+							}
 						}
 					}
+					if parts[0] == "tcp" {
+						ranger, _ = startRange(ip, true)
+					} else {
+						ranger, _ = startRange(ip, false)
+					}
+					messages = append(messages, m.systemStyle.Render("Ranger started"))
+				} else if parts[0] == "stop" {
+					if ranger != nil {
+						ranger.Close()
+						ranger = nil
+						messages = append(messages, m.systemStyle.Render("Ranger stopped"))
+					}
 				}
-				if parts[0] == "tcp" {
-					ranger, _ = startRange(ip, true)
-				} else {
-					ranger, _ = startRange(ip, false)
-				}
-				messages = append(messages, m.systemStyle.Render("Ranger started"))
-			} else if parts[0] == "stop" {
-				if ranger != nil {
-					ranger.Close()
-					ranger = nil
-					messages = append(messages, m.systemStyle.Render("Ranger stopped"))
-				}
-			}
 
-			return
+				return
+			},
+			Help: "Starts or stops ranger. Usage: /range [udp|tcp|stop]",
 		},
 	}
 }
@@ -262,7 +276,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(v) > 0 && v[0] == '/' {
 				parts := strings.Split(v[1:], " ")
 				if cmd, ok := commands[parts[0]]; ok {
-					if msgs := cmd(m, strings.Join(parts[1:], " ")); msgs != nil {
+					if msgs := cmd.Func(m, strings.Join(parts[1:], " ")); msgs != nil {
 						m.messages = append(m.messages, msgs...)
 					}
 				} else {
