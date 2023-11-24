@@ -184,7 +184,7 @@ func initialModel() model {
 
 	systemStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 
-	vp := viewport.New(80, 4)
+	vp := viewport.New(80, 8)
 	var messages []string
 	var welcome string
 	if rand.Intn(2) == 0 {
