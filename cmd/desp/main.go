@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -36,6 +37,14 @@ func init() {
 				return
 			},
 			Help: "Prints this help message",
+		},
+		"quit": {
+			Func: func(m model, in string) (messages []string) {
+				program.ReleaseTerminal()
+				os.Exit(0)
+				return nil
+			},
+			Help: "Quits the program",
 		},
 		"mcast": {
 			Func: func(m model, in string) (messages []string) {
